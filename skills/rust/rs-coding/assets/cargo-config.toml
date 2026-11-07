@@ -1,0 +1,38 @@
+# source: spnngl/dedens@c38c406 .cargo/config.toml (target tables; dedens decision refs dropped); re-sync when it changes.
+# Merge into `.cargo/config.toml`; replace PROJECT with the project's name.
+#
+# Targets link with lld through `linker`, which `RUSTFLAGS` in the environment (loom, cargo-fuzz, cargo-careful,
+# cargo-llvm-cov) does not replace as it does `rustflags`, and which stable accepts for every target
+# (`-C linker-features=+lld` needs `-Z unstable-options` outside x86_64-unknown-linux-gnu).
+#
+# x86_64-unknown-linux-gnu has no entry: rustc links with its own lld there by default (1.90), as long as no
+# `linker` is set for it.
+
+# Apple's `ld` is the default; lld is Rust's `gcc-ld/ld64.lld`.
+[target.aarch64-apple-darwin]
+linker = ".cargo/lld-cc"
+
+# rustc's default there is GNU ld through `cc`.
+[target.aarch64-unknown-linux-gnu]
+linker = ".cargo/lld-cc"
+
+# The static musl binaries, built in `rust:<channel>-alpine` with the repository mounted at /src; proc macros and
+# build scripts link here too, with the system's lld (`lld-cc`). x86_64 links static-pie by default; aarch64 does
+# not (rustc's target spec): `lld-cc` links it so, from position-independent code. The workspace and CARGO_HOME
+# paths are remapped so no path of the build machine lands in a release binary; set here, not in RUSTFLAGS, which
+# would replace them.
+[target.x86_64-unknown-linux-musl]
+linker = ".cargo/lld-cc"
+rustflags = [
+  "--remap-path-prefix=/src=PROJECT",
+  "--remap-path-prefix=/usr/local/cargo=cargo",
+]
+
+[target.aarch64-unknown-linux-musl]
+linker = ".cargo/lld-cc"
+rustflags = [
+  "-C",
+  "relocation-model=pic",
+  "--remap-path-prefix=/src=PROJECT",
+  "--remap-path-prefix=/usr/local/cargo=cargo",
+]
