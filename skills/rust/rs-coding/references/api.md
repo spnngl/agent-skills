@@ -1,40 +1,39 @@
 # Public API design
 
-Applies to every `pub` item reachable from a library's crate root. Distilled from the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html); consult the checklist for cases not covered here.
+Applies to every `pub` item reachable from a library's crate root. Trait impls: [`traits.md`](traits.md). Cases not covered here: the [Rust API Guidelines checklist](https://rust-lang.github.io/api-guidelines/checklist.html).
 
 ## Surface
 
-- Expose the minimum: private by default, `pub(crate)` for crate-internal items, `pub use` re-exports to shape the public paths.
+- Expose the minimum: private by default, `pub(crate)` for crate-internal items.
 - Private fields plus constructors keep invariants enforceable; a public field is a promise never to validate it.
-- Dependency types in public signatures tie your semver to theirs. Re-export the dependency (`pub use dep;`) or wrap its types.
-- Future-proof with `#[non_exhaustive]` on public enums and on structs that may gain fields.
+- Public signatures use std types and your own. A dependency's type there ties your semver to theirs: wrap it, or expose it behind a feature flag when interop is the point. Never `pub use` a dependency or its types; the exceptions are umbrella crates and the hidden paths macros expand to ([`macros.md`](macros.md)).
+- Public signatures take and return plain types, not `Arc<T>`, `Box<T>`, or `Rc<RefCell<T>>`; sharing is an internal choice.
+- Shape public paths with `#[doc(inline)] pub use` of your own items. Each item has one public path: no glob re-exports, no `prelude` module.
+- Modules follow the domain. A `traits`, `errors`, `types`, or `utils` module groups by kind and scatters each feature across files.
+- No `static` holding state: two versions of the crate in one build get two copies, and tests cannot reset it. Pass state in.
+- `#[non_exhaustive]` on public enums and on structs that may gain fields.
 - Seal traits that users call but must not implement:
   ```rust
   mod private { pub trait Sealed {} }
   pub trait Format: private::Sealed { /* ... */ }
   ```
 
+## Abstractions
+
+- Concrete types first, generics when callers must choose the type, `dyn Trait` last.
+- To swap an external dependency in tests, an `enum` of the real client and a fake (behind a `test-util` feature) beats a trait with one production impl.
+- Keep generics shallow: `Client<Transport>`, not `Client<Retry<Timeout<Transport>>>` in public signatures.
+- I/O entry points accept `impl Read` / `impl BufRead` / `impl Write`. Parsing and protocol logic stay sans-IO, on bytes and states, so they test without files or sockets and run under any runtime.
+
 ## Construction and inputs
 
-- A builder (`FooBuilder::build(self) -> Result<Foo, BuildError>`) once optional parameters pass about three; typestate when calls must happen in order.
+- Up to two optional parameters: `new` plus `with_*` methods. More: `Foo::builder(required) -> FooBuilder`, setters named after the field (`.timeout(d)`), `build()` returning `Result` only when validation can fail; `FooBuilder` has no public `new`. The project's existing convention wins.
+- Four or more related parameters: group them in a type (`Credentials { user, password }`).
+- The same concept has the same type and position in every function.
+- Typestate when calls must happen in order.
 - Accept `impl AsRef<Path>` / `impl Into<String>` at ergonomic entry points and convert once; keep internals concrete, since every generic monomorphizes.
 - Closure parameters take the weakest bound that works: `FnOnce`, then `FnMut`, then `Fn`.
 - `#[must_use]` on functions whose return value is the whole point and on methods returning a modified `Self`.
-
-## Traits to implement
-
-- Derive on public types wherever semantically valid: `Debug` always, then `Clone`, `PartialEq`, `Eq`, `Hash`, `PartialOrd`, `Ord`, `Default`. Adding `Copy` later is compatible; removing it breaks callers.
-- Conversions: implement `From` (`Into` comes free), `TryFrom` for fallible ones, `FromStr` for text, `AsRef` for cheap borrows. `Deref` belongs to smart pointers only.
-- Collections: `IntoIterator` for `T`, `&T`, and `&mut T`, plus `FromIterator` and `Extend`.
-- `Serialize` / `Deserialize` behind an optional `serde` feature (see [`cargo.md`](cargo.md#features)).
-- Keep public types `Send + Sync` unless they inherently are not, and pin it with a test:
-  ```rust
-  #[test]
-  fn public_types_are_send_sync() {
-      fn assert<T: Send + Sync>() {}
-      assert::<Client>();
-  }
-  ```
 
 ## Naming
 
@@ -50,7 +49,8 @@ Applies to every `pub` item reachable from a library's crate root. Distilled fro
 
 ## Documentation
 
-- Crate docs (`//!`) open with a quick-start example; `#![doc = include_str!("../README.md")]` keeps README and docs in one source.
+- Sections where they apply: `# Examples` (runnable), `# Errors` (each failure and its cause), `# Panics`, `# Safety` (on every `unsafe fn`).
+- Public modules get `//!` docs. Crate docs open with a quick-start example; `#![doc = include_str!("../README.md")]` keeps README and docs in one source.
 - Link items with intra-doc links: ``[`Client::send`]``.
 
 ## Semver
@@ -60,5 +60,6 @@ Run `cargo semver-checks` before a release. Breaking changes include:
 - removing or renaming a public item, or moving it without a re-export;
 - adding a variant to an exhaustive enum, or a field to an exhaustive struct with public fields;
 - adding a trait method without a default, or tightening a bound;
-- losing an auto trait (a new `Rc` field makes the type `!Send`);
-- raising `rust-version` (treat as at least a minor bump).
+- losing an auto trait (a new `Rc` field makes the type `!Send`).
+
+Raising `rust-version` is not breaking, but takes a minor bump.
